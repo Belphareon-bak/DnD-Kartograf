@@ -14,7 +14,7 @@ from atlas_layout import COMPACT_MODULE_AREAS, NORMALS, SEAM_TOLERANCE, arrange,
 from aurora_reader import (ARE, DDS, GIT, IFO, MAX_RESOURCE_BYTES, MDL, NCS, NSS, SET, TGA, TWO_DA, AuroraError,
                            ErfReader, GameResources, Localized, TalkTable, read_gff, text_bytes)
 from document import (Area, Mark, MAX_AREAS, MAX_LEVEL, MAX_MINIMAP_SIDE, MAX_SIZE, Patch, Placement, Project, Scenery, Target,
-                      Tile, TileLayout, cell_name, marker_group, rotated_xy)
+                      Tile, TileLayout, cell_name, marker_group, rotated_scenery, rotated_xy)
 from nwn_minimap import TEXTURE_SAMPLE_SIDE, dds_image, minimap_png, tga_texture
 from nwn_objects import NAME, appearance_models, model_preview, tile_preview
 from nwn_rules import nwn_rules
@@ -994,16 +994,37 @@ def merge_nwn_treasures(project, imported):
     return patch, matched
 
 
-def merge_nwn_tile_images(project, imported):
-    """Aktualizuj grafiku ověřených typů dlaždic v jedné vratné změně."""
-    patch = Patch("Aktualizace podkladů dlaždic z modulu NWN")
+def scenery_identity(item):
+    # Zaokrouhlení vyrovná nepatrné rozdíly po opakovaných otočeních oblasti.
+    x, y = item.point
+    return item.name, round(x, 6), round(y, 6), round(item.angle, 6) % 360, item.elevation, item.usable
+
+
+def refreshed_scenery(area, source, turns):
+    previews = {}
+    for item in rotated_scenery(source, turns):
+        key = scenery_identity(item)
+        if key in previews and previews[key] != item.preview:
+            previews[key] = None
+        else:
+            previews[key] = item.preview
+    return tuple(replace(item, preview=preview) if (preview := previews.get(scenery_identity(item))) else item
+                 for item in area.scenery)
+
+
+def merge_nwn_graphics(project, imported):
+    """Obnov podklady dlaždic a náhledy odpovídajících objektů v jedné vratné změně."""
+    patch = Patch("Aktualizace grafiky z modulu NWN")
     assets = {}
     matched = 0
-    for area in project.areas.values():
+    for uid, area in project.areas.items():
         source = imported.areas.get(area.source_ref)
-        if source is None or native_grid_rotation(area, source) is None:
+        if source is None or (turns := native_grid_rotation(area, source)) is None:
             continue
         matched += 1
+        if area.scenery and source.scenery:
+            scenery = refreshed_scenery(area, source, turns)
+            patch.put(project.areas, uid, replace(area, scenery=scenery))
         for tile in source.tiles.values():
             if tile.layout and tile.layout.index >= 0:
                 assets[source.tileset, tile.layout.index] = tile.layout

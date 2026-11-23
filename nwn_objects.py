@@ -219,6 +219,9 @@ def model_preview(raw, texture_color, texture_image=None):
     faces = model_faces(raw, texture_color)
     if not faces:
         return None
+    materials = {face.material for face in faces}
+    if texture_image and "null" not in materials and all(texture_image(name).isNull() for name in materials):
+        return None
     xs, ys = zip(*(point for face in faces for point in face.points))
     left, top = min(xs), min(ys)
     width, height = max(xs) - left, max(ys) - top

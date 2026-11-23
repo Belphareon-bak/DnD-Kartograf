@@ -17,7 +17,7 @@ from aurora_reader import AuroraError
 from document import Area, Target, load_project, rotate_area, save_project
 from drawing import CELL, draw_map, draw_relief
 from example import mountain_project
-from nwn_import import ImportCancelled, import_module, merge_nwn_tile_images, merge_nwn_treasures
+from nwn_import import ImportCancelled, import_module, merge_nwn_graphics, merge_nwn_treasures
 from nwn_minimap import dds_image
 
 
@@ -95,7 +95,7 @@ Bottom=Road
 
 
 def module_fixture(path, include_tileset=True, scripted=False, shared_passage=False,
-                   *, hak="", version=1, indoor=False, scenery=False):
+                   *, hak="", version=1, indoor=False, scenery=False, stand_bitmap="NULL"):
     def t(index, height=0, orientation=0):
         return dict(Tile_ID=index, Tile_Height=height, Tile_Orientation=orientation)
 
@@ -169,7 +169,7 @@ def module_fixture(path, include_tileset=True, scripted=False, shared_passage=Fa
         resources.extend((
             ("placeables", 2017, b'2DA V2.0\n\nLabel StrRef ModelName\n21 "Optics table" **** stand_mdl\n'
                                  b'22 Switch **** switch_mdl\n'),
-            ("stand_mdl", 2002, b"""newmodel stand_mdl
+            ("stand_mdl", 2002, f"""newmodel stand_mdl
 beginmodelgeom stand_mdl
 node dummy stand_mdl
   parent NULL
@@ -178,16 +178,20 @@ endnode
 node trimesh frame
   parent stand_mdl
   render 1
-  bitmap NULL
+  bitmap {stand_bitmap}
   verts 3
     0 0 0
     3 0 0
     0 1 0
+  tverts 3
+    0 0 0
+    1 0 0
+    0 1 0
   faces 1
-    0 1 2 0 0 0 0 0
+    0 1 2 0 0 1 2 0
 endnode
 endmodelgeom stand_mdl
-"""),
+""".encode("ascii")),
             ("switch_mdl", 2002, b"\0compiled"),
         ))
     return write_erf(path, resources)
@@ -244,7 +248,7 @@ class NwnImportTest(unittest.TestCase):
             self.assertEqual((image.width(), image.height()), (256, 256))
             self.assertEqual(image.pixelColor(32, 128), QColor("red"))
             self.assertEqual(image.pixelColor(216, 128), QColor("blue"))
-            update, matched = merge_nwn_tile_images(project, imported)
+            update, matched = merge_nwn_graphics(project, imported)
             self.assertEqual((matched, len(update.edits)), (2, 6))
             update.redo()
             self.assertEqual(project.atlas, previous.atlas)
@@ -252,7 +256,7 @@ class NwnImportTest(unittest.TestCase):
             rotated = project.areas["workshop"].tiles[0, 0]
             self.assertEqual(rotated.turns, 1)
             self.assertEqual(rotated.layout.detail, imported.areas["workshop"].tiles[0, 0].layout.detail)
-            self.assertFalse(merge_nwn_tile_images(project, imported)[0].edits)
+            self.assertFalse(merge_nwn_graphics(project, imported)[0].edits)
             saved = root / "compiled.kartograf"
             save_project(project, saved)
             self.assertEqual(load_project(saved), project)
@@ -350,6 +354,42 @@ endmodelgeom terrain
             self.assertEqual(load_project(root / "scenery.kartograf"), project)
             rotation.undo()
             self.assertEqual(project.areas["workshop"].scenery, (stand, switch))
+
+    def test_graphics_refresh_repairs_saved_object_textures_after_rotation(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            module = module_fixture(root / "scenery.mod", scenery=True)
+            project, _ = import_module(module, profile=root)
+            rotate_area(project, "workshop", 1).redo()
+            saved = root / "legacy.kartograf"
+            save_project(project, saved)
+            project = load_project(saved)
+            before = deepcopy(project)
+            area = project.areas["workshop"]
+            stand, switch = area.scenery
+            image = QImage.fromData(stand.preview.data)
+            point = image.width() // 5, image.height() * 3 // 4
+            self.assertEqual(image.pixelColor(*point), QColor("#b9b1a4"))
+
+            module_fixture(module, scenery=True, stand_bitmap="stand_tex")
+            missing, _ = import_module(module, profile=root)
+            self.assertEqual(len(missing.areas["workshop"].scenery), 1)
+            self.assertFalse(merge_nwn_graphics(project, missing)[0].edits)
+
+            (root / "stand_tex.dds").write_bytes(struct.pack("<4IfHHI", 4, 4, 3, 8, 1, 0x07e0, 0, 0))
+            imported, _ = import_module(module, profile=root)
+            preview = imported.areas["workshop"].scenery[0].preview
+            self.assertEqual(QImage.fromData(preview.data).pixelColor(*point), QColor("lime"))
+            update, matched = merge_nwn_graphics(project, imported)
+            self.assertEqual((matched, len(update.edits)), (2, 1))
+            update.redo()
+            self.assertEqual(project.areas["workshop"], replace(area, scenery=(replace(stand, preview=preview), switch)))
+            self.assertEqual(project.atlas, before.atlas)
+            self.assertFalse(merge_nwn_graphics(project, imported)[0].edits)
+            save_project(project, root / "refreshed.kartograf")
+            self.assertEqual(load_project(root / "refreshed.kartograf"), project)
+            update.undo()
+            self.assertEqual(project, before)
 
     def test_hak_minimaps_render_with_native_rotation_and_survive_saving(self):
         with tempfile.TemporaryDirectory() as tmp:

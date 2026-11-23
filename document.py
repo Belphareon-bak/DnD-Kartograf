@@ -186,6 +186,11 @@ def rotated_xy(width, height, point, turns):
     return ((x, y), (height - y, x), (width - x, height - y), (y, width - x))[turns % 4]
 
 
+def rotated_scenery(area, turns):
+    return tuple(replace(item, point=rotated_xy(area.cols, area.rows, item.point, turns),
+                         angle=(item.angle + turns * 90) % 360) for item in area.scenery)
+
+
 class Patch(QUndoCommand):
     """Jedna změna i pro celý tah štětce nebo pro obě strany průchodu."""
 
@@ -283,8 +288,7 @@ def rotate_area(project, uid, direction):
         markers={(*cell(x, y), group): relink(relocate(turn(item)))
                  for (x, y, group), item in area.markers.items()},
         reference=ref,
-        scenery=tuple(replace(item, point=rotated_xy(area.cols, area.rows, item.point, direction),
-                              angle=(item.angle + direction * 90) % 360) for item in area.scenery),
+        scenery=rotated_scenery(area, direction),
     )
     patch = Patch("Otočení oblasti")
     patch.put(project.areas, uid, changed)

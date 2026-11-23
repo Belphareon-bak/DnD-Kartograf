@@ -52,7 +52,7 @@ Kartograf čte z tilesetu minimapu každé dlaždice a otočí ji podle modulu. 
 
 Ve zvětšeném pohledu vykresluje dlaždice z textových i binárních modelů NWN a jejich textur TGA či DDS. Podklady až 256 × 256 px vznikají z dat modulu, HAKů a instalace hry. Pro dlaždice bez vykreslitelného modelu použije původní minimapu. Tyto podklady se uloží do projektu a použijí se i při exportu.
 
-Otevřenému projektu doplníš nové podklady přes **Soubor → Aktualizovat dlaždice z modulu NWN**. Kartograf ověří shodu nativních dlaždic a použije nové obrázky na existující půdorys. Změnu lze vrátit zpět.
+U uloženého projektu obnovíš grafiku přes **Soubor → Aktualizovat dlaždice a vybavení z modulu NWN**. Kartograf ověří půdorys a načte nové podklady dlaždic i náhledy odpovídajících objektů. Funguje to i pro otočené oblasti. Změnu lze vrátit zpět.
 
 Vrstva **Vybavení** dokreslí půdorysy objektů z textových modelů NWN a viditelné poznámky z herní mapy. Objekty mají polohu a natočení z modulu. Interaktivní objekt bez dostupného půdorysu dostane bodovou značku. Po najetí na objekt v přiblížené mapě uvidíš jeho název. Půdorysy a polohy se ukládají s projektem a promítají se i do PDF a PNG.
 

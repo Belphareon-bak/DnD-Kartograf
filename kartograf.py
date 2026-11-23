@@ -23,7 +23,7 @@ from document import (AREA_KINDS, Area, MAX_AREAS, MAX_LEVEL, Mark, Patch, Proje
 from drawing import (CELL, SANS, compass, export_area_pdf, export_atlas_pdf, export_atlas_png,
                      export_png, export_size, font, icon)
 from example import mountain_project
-from nwn_import import ImportCancelled, game_folder, import_module, merge_nwn_tile_images, merge_nwn_treasures, profile_dir
+from nwn_import import ImportCancelled, game_folder, import_module, merge_nwn_graphics, merge_nwn_treasures, profile_dir
 from panels import (AreaDialog, DIRECTIONS, ExportDialog, MarkForm, Palette, ReferenceDialog,
                     StartupDialog, heading, labeled_button, normalized, space_spin, subtle)
 
@@ -320,7 +320,7 @@ class Editor(QMainWindow):
         self.action(menu, "Nový projekt…", self.new_project, "Ctrl+N")
         self.action(menu, "Otevřít soubor…", self.browse_project, "Ctrl+O")
         self.action(menu, "Importovat modul NWN…", self.choose_module, "Ctrl+I")
-        self.action(menu, "Aktualizovat dlaždice z modulu NWN…", self.choose_tile_module, project_only=True)
+        self.action(menu, "Aktualizovat dlaždice a vybavení z modulu NWN…", self.choose_graphics_module, project_only=True)
         self.action(menu, "Doplnit poklady z modulu NWN…", self.choose_treasure_module, project_only=True)
         self.action(menu, "Složka dat NWN…", self.choose_nwn_game)
         menu.addSeparator()
@@ -1343,9 +1343,9 @@ class Editor(QMainWindow):
         self.update_from_module("Doplnit poklady z modulu NWN", merge_nwn_treasures,
                                 "Poklady · {} nových značek v {} porovnaných oblastech", tile_details=False)
 
-    def choose_tile_module(self):
-        self.update_from_module("Aktualizovat dlaždice z modulu NWN", merge_nwn_tile_images,
-                                "Dlaždice · {} aktualizovaných polí · porovnáno {} oblastí", tile_details=True)
+    def choose_graphics_module(self):
+        self.update_from_module("Aktualizovat dlaždice a vybavení z modulu NWN", merge_nwn_graphics,
+                                "Grafika z NWN · {} změn · porovnáno {} oblastí", tile_details=True)
 
     def update_from_module(self, title, merge, summary, *, tile_details):
         initial = str(self.session_path.parent) if self.session_path else self.module_directory()
