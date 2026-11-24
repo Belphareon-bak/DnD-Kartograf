@@ -1,17 +1,19 @@
 """Strom palety, formulář prvku a dialogy editoru."""
 from dataclasses import replace
 from fractions import Fraction
+from html import escape
 import unicodedata
 
 from PyQt5.QtCore import QSize, Qt, pyqtSignal
 from PyQt5.QtWidgets import (QAbstractItemView, QCheckBox, QComboBox, QDialog, QDialogButtonBox,
                              QDoubleSpinBox, QFormLayout, QFrame, QHBoxLayout, QLabel, QLineEdit,
                              QMessageBox, QPlainTextEdit, QPushButton, QSizePolicy, QSlider, QSpinBox,
-                             QTreeWidget, QTreeWidgetItem, QVBoxLayout, QWidget)
+                             QTextBrowser, QTreeWidget, QTreeWidgetItem, QVBoxLayout, QWidget)
 
 from catalog import ASSETS, GROUPS
 from document import AREA_KINDS, MAX_SIZE, MIN_SIZE, UNITS, Target, cell_name
 from drawing import PDF_DPI, icon
+from nwn_bestiary import CreatureCard, EncounterCard
 
 DIRECTIONS = ("↑ Nahoru", "→ Doprava", "↓ Dolů", "← Doleva")
 GROUP_ICON = dict(outdoor="grass", relief="raise_ground", indoor="flagstone", door="door", link="exit", monster="monster",
@@ -406,6 +408,55 @@ def detail_label(text, name=""):
     return label
 
 
+class CreatureDialog(QDialog):
+    def __init__(self, card, encounter_cr="", parent=None):
+        super().__init__(parent)
+        self.setWindowTitle(f"{card.name} — karta nestvůry")
+        self.resize(640, 660)
+        self.setMinimumSize(375, 380)
+        layout = QVBoxLayout(self)
+        browser = QTextBrowser()
+        browser.setObjectName("creatureCard")
+        browser.setOpenLinks(False)
+        browser.setHtml(self.stat_block(card, encounter_cr))
+        layout.addWidget(browser)
+        buttons = QDialogButtonBox(QDialogButtonBox.Close)
+        buttons.button(QDialogButtonBox.Close).setText("Zavřít")
+        buttons.rejected.connect(self.reject)
+        layout.addWidget(buttons)
+
+    @staticmethod
+    def stat_block(card, encounter_cr):
+        source = {"UTC": "Šablona NWN", "GIT": "Instanční údaje NWN"}.get(card.source, "Seznam nestvůr střetu NWN")
+        metadata = " · ".join(v for v in (source, card.resref) if v)
+        cr = []
+        if encounter_cr:
+            cr.append(f"CR ve střetu {encounter_cr}")
+        if card.cr and card.cr != encounter_cr:
+            cr.append(f"CR v datech {card.cr}")
+        parts = [
+            '<body style="color:#e5e6db;background-color:#202622;">',
+            f'<h1 style="color:#f4dfb1;font-family:serif;">{escape(card.name)}</h1>',
+            f'<p style="color:#adb8aa;">{escape(metadata)}</p>',
+        ]
+        if cr:
+            parts.append(f'<p style="color:#f4dfb1;"><b>{escape(" · ".join(cr))}</b></p>')
+        if any(score is not None for score in card.abilities):
+            cells = "".join(
+                f'<td width="16%" align="center"><b>{label}</b><br/>{score if score is not None else "—"}</td>'
+                for label, score in zip(("SÍL", "OBR", "ODL", "INT", "MDR", "CHA"), card.abilities))
+            parts.append(f'<table width="100%" cellpadding="8" bgcolor="#303a30"><tr>{cells}</tr></table>')
+        for label, value in card.stats:
+            parts.append(f'<p><b style="color:#f4dfb1;">{escape(label)}</b><br/>{escape(value)}</p>')
+        if card.description:
+            description = escape(card.description).replace("\n", "<br/>")
+            parts.append(f'<h3>Popis ve hře</h3><p>{description}</p>')
+        if not card.source:
+            parts.append("<p>Podrobná šablona UTC je nedostupná.</p>")
+        parts.append("</body>")
+        return "".join(parts)
+
+
 class MarkSummary(QFrame):
     go_to = pyqtSignal(object)
 
@@ -417,25 +468,72 @@ class MarkSummary(QFrame):
         layout.setSpacing(6)
         asset = ASSETS[item.style]
         notes = item.note.splitlines()
-        kind = {"link": "Přechod", "monster": "Střet NWN" if "Střet NWN" in notes else "Nestvůra"}.get(
-            asset.group, GROUPS[asset.group])
+        card = item.nwn_detail
+        encounter = isinstance(card, EncounterCard) or "Střet NWN" in notes
+        kind = {"link": "Přechod", "monster": "Střet NWN" if encounter else "Nestvůra"}.get(asset.group, GROUPS[asset.group])
         coordinate = cell_name(min(key[0], area.cols - 1), min(key[1], area.rows - 1))
         layout.addWidget(subtle(f"{kind} · {coordinate}"))
         layout.addWidget(detail_label(item.name or (kind if asset.group == "monster" else asset.name), "objectTitle"))
         if asset.group == "link":
             self.add_destination(layout, project, item, notes, browsing)
-        if asset.group == "monster" and item.cr:
-            layout.addWidget(detail_label(f"CR {item.cr}", "markChallenge"))
-        for line in notes:
-            title, _, value = line.partition(" · ")
-            if title == "Zásoba nestvůr" and value:
-                layout.addWidget(heading("MOŽNÉ NESTVŮRY"))
-                layout.addWidget(detail_label(value.replace(", ", "\n"), "legacyEncounterPool"))
+        if isinstance(card, EncounterCard):
+            self.add_encounter(layout, card)
+        elif asset.group == "monster":
+            self.add_monster(layout, item, notes)
         if browsing and kind not in {"Přechod", "Střet NWN"}:
             if item.dc is not None:
                 layout.addWidget(detail_label(f"TO / DC {item.dc}"))
             if item.note:
                 layout.addWidget(detail_label(item.note))
+
+    def add_monster(self, layout, item, notes):
+        card = item.nwn_detail
+        cr = item.cr or (card.cr if card else "")
+        if cr:
+            layout.addWidget(detail_label(f"CR {cr}", "markChallenge"))
+        if card:
+            button = labeled_button("Karta nestvůry", "openCreatureCard", "monster")
+            button.clicked.connect(lambda: CreatureDialog(card, parent=self).exec_())
+            layout.addWidget(button)
+        else:
+            for line in notes:
+                title, _, value = line.partition(" · ")
+                if title == "Zásoba nestvůr" and value:
+                    layout.addWidget(heading("MOŽNÉ NESTVŮRY"))
+                    layout.addWidget(detail_label(value.replace(", ", "\n"), "legacyEncounterPool"))
+
+    def add_encounter(self, layout, card):
+        facts = []
+        if card.difficulty:
+            facts.append(card.difficulty)
+        if card.recommended is not None:
+            facts.append(f"Doporučený počet {card.recommended}")
+        if card.maximum is not None:
+            facts.append(f"Nejvýše {card.maximum} najednou")
+        if card.active is False:
+            facts.append("Neaktivní střet")
+        if card.spawn_points:
+            facts.append(f"Body výskytu {card.spawn_points}")
+        if facts:
+            layout.addWidget(detail_label(" · ".join(facts), "encounterFacts"))
+        layout.addWidget(heading("MOŽNÉ NESTVŮRY"))
+        if not card.entries:
+            layout.addWidget(subtle("Seznam v modulu je prázdný."))
+        for entry in card.entries:
+            creature = entry.creature or CreatureCard(entry.name, entry.resref)
+            label = QLabel(f'<a href="card" style="color:#f4dfb1;">{escape(entry.name)}</a>')
+            label.setWordWrap(True)
+            label.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Preferred)
+            label.setObjectName("encounterCreature")
+            label.setTextInteractionFlags(Qt.TextBrowserInteraction)
+            label.setOpenExternalLinks(False)
+            label.setToolTip(entry.resref)
+            label.linkActivated.connect(lambda _, c=creature, cr=entry.cr: CreatureDialog(c, cr, self).exec_())
+            layout.addWidget(label)
+            cr = entry.cr or creature.cr
+            details = ([f"CR {cr}"] if cr else []) + (["Nejvýše jedna této šablony"] if entry.single_spawn else [])
+            if details:
+                layout.addWidget(subtle(" · ".join(details)))
 
     def add_destination(self, layout, project, item, notes, browsing):
         target = item.target

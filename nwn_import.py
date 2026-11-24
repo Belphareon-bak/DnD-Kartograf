@@ -11,15 +11,16 @@ from PyQt5.QtCore import Qt
 from PyQt5.QtGui import QColor, QImage
 
 from atlas_layout import COMPACT_MODULE_AREAS, NORMALS, SEAM_TOLERANCE, arrange, edge_point, nearest_edge, world_areas
-from aurora_reader import (ARE, DDS, GIT, IFO, MAX_RESOURCE_BYTES, MDL, NCS, NSS, SET, TGA, TWO_DA, AuroraError,
-                           ErfReader, GameResources, Localized, TalkTable, read_gff, text_bytes)
+from aurora_reader import (ARE, DDS, GIT, IFO, MAX_RESOURCE_BYTES, MDL, NCS, NSS, SET, TGA, TWO_DA, UTC, UTE,
+                           AuroraError, ErfReader, GameResources, Localized, TalkTable, read_gff, table_columns, text_bytes)
 from document import (Area, Mark, MAX_AREAS, MAX_LEVEL, MAX_MINIMAP_SIDE, MAX_SIZE, Patch, Placement, Project, Scenery, Target,
                       Tile, TileLayout, cell_name, marker_group, rotated_scenery, rotated_xy)
 from nwn_minimap import TEXTURE_SAMPLE_SIDE, dds_image, minimap_png, tga_texture
+from nwn_bestiary import (CREATURE_FIELDS, ENCOUNTER_FIELDS, EncounterCard, EncounterEntry,
+                          gff_rows, make_creature_card, stat_int)
 from nwn_objects import NAME, appearance_models, model_preview, tile_preview
 from nwn_rules import nwn_rules
 
-UTC = 2027
 # Větší moduly sdílejí rozpočet pixelů mezi unikátními modely dlaždic.
 MAX_DETAIL_PIXELS = 25_000_000
 MAX_TEXTURE_CACHE_BYTES = 48 * 1024 * 1024
@@ -34,7 +35,8 @@ GIT_FIELDS = set(
     "Locked Lockable KeyRequired KeyName OpenLockDC TrapFlag TrapDetectDC DisarmDC TrapType "
     "HasInventory ItemList InventoryRes OnOpen OnUsed BaseItem ChallengeRating CreatureList ResRef CR SpawnPointList "
     "Appearance Useable Bearing Z".split()
-) | {"Door List", "TriggerList", "Creature List", "Encounter List", "Placeable List", "WaypointList", "List"}
+) | {"Door List", "TriggerList", "Creature List", "Encounter List", "Placeable List", "WaypointList", "List"} \
+  | CREATURE_FIELDS | ENCOUNTER_FIELDS
 SCRIPT_TOKENS = re.compile(r'//[^\r\n]*|/\*.*?\*/|"(?:[^"\\]|\\.)*"|[A-Za-z_]\w*|\S', re.DOTALL)
 SCRIPT_RESREF = re.compile(r'"([A-Za-z0-9_-]{1,16})"')
 CORNERS = ("topleft", "topright", "bottomright", "bottomleft")
@@ -200,11 +202,14 @@ class Resources:
         for directory in self._override_dirs:
             if directory.is_dir():
                 for file in directory.iterdir():
-                    if file.suffix.casefold() in {".set", ".tga", ".dds", ".2da", ".mdl"} and file.is_file():
+                    if file.suffix.casefold() in {".set", ".tga", ".dds", ".2da", ".mdl", ".utc", ".ute"} and file.is_file():
                         self.extra_assets.setdefault(file.name.casefold(), file)
         self._tilesets = {}
         self._minimaps = {}
-        self._creatures = {}
+        self._templates = {}
+        self._creature_cards = {}
+        self._tables = {}
+        self._table_names = {}
         self._loot_scripts = {}
         self._model_names = None
         self._model_previews = {}
@@ -217,10 +222,10 @@ class Resources:
         for name in dict.fromkeys(n for n in haks if n):
             found = _named_file(name, ".hak", (folder, folder / "hak", folder / "haky", profile / "hak"))
             if found:
-                self.haks.append(ErfReader(found, {SET, TGA, DDS, MDL, TWO_DA, UTC, NSS, NCS}))
+                self.haks.append(ErfReader(found, {SET, TGA, DDS, MDL, TWO_DA, UTC, UTE, NSS, NCS}))
             else:
                 report.missing_haks.append(name)
-        self.base = GameResources(game, {SET, TGA, DDS, MDL, TWO_DA, NSS}) if game else None
+        self.base = GameResources(game, {SET, TGA, DDS, MDL, TWO_DA, UTC, UTE, NSS}) if game else None
         self.custom = self.standard = None
         custom = ifo.get("Mod_CustomTlk")
         if custom:
@@ -359,14 +364,46 @@ class Resources:
         return self._model_previews[name]
 
     def creature(self, name):
-        if name and name not in self._creatures:
-            self._creatures[name] = {}
-            for archive in (self.module, *self.haks):
-                raw = archive.read(name, UTC)
-                if raw:
-                    self._creatures[name] = read_gff(raw, GIT_FIELDS)
-                    break
-        return self._creatures.get(name, {})
+        return self.template(name, UTC, ".utc", CREATURE_FIELDS)
+
+    def template(self, name, kind, extension, fields):
+        if not (name := key_tag(name)):
+            return {}
+        key = name, kind
+        if key not in self._templates:
+            try:
+                raw = self._asset(name, kind, extension)
+                self._templates[key] = read_gff(raw, fields) if raw else {}
+            except (OSError, AuroraError):
+                self._templates[key] = {}
+        return self._templates[key]
+
+    def creature_card(self, name):
+        if name not in self._creature_cards:
+            data = self.creature(name)
+            self._creature_cards[name] = make_creature_card(
+                self, data, name, cr_text(data.get("ChallengeRating")), "UTC") if data else None
+        return self._creature_cards[name]
+
+    def table_name(self, table, index, column):
+        if stat_int(index) is None:
+            return ""
+        key = table, column
+        if key not in self._tables:
+            try:
+                self._tables[key] = table_columns(self._asset(table, TWO_DA, ".2da"), "Label", column)
+            except (OSError, AuroraError):
+                self._tables[key] = {}
+        key = table, column, index
+        if key not in self._table_names:
+            label, strref = self._tables[table, column].get(index, ("", ""))
+            fallback = label.replace("_", " ") if label and label != "****" else f"#{index}"
+            try:
+                title = self.text(Localized(int(strref), {}))
+            except (ValueError, OSError):
+                title = ""
+            self._table_names[key] = (title or fallback)[:160]
+        return self._table_names[key]
 
     def _script(self, name):
         for archive in (self.module, *self.haks):
@@ -707,25 +744,38 @@ def add_objects(area, git, res, report, target_tags, transitions):
         pos = area_position(area, obj)
         if pos is None:
             continue
-        template = res.creature(obj.get("TemplateResRef")) if obj.get("ChallengeRating") is None else {}
-        data = template | obj
-        add_mark(area, locate(area, pos), "monster",
-                 named_mark("monster", res.name(data), note_for(obj), cr=cr_text(data.get("ChallengeRating"))))
+        ref = key_tag(obj.get("TemplateResRef"))
+        data = res.creature(ref) | obj
+        cr = cr_text(data.get("ChallengeRating"))
+        card = make_creature_card(res, data, ref, cr, "GIT")
+        add_mark(area, locate(area, pos), "monster", named_mark(
+            "monster", card.name, note_for(obj), cr=cr, nwn_detail=card))
         report.creatures += 1
 
     for obj in git.get("Encounter List", []):
         pos = area_position(area, obj, polygon=True) or area_position(area, obj)
         if pos is None:
             continue
-        pool = [f"{pawn.get('ResRef', '')} · CR {cr_text(pawn.get('CR'))}" for pawn in obj.get("CreatureList", [])]
-        spawn = [cell_name(*locate(area, where)) for entry in obj.get("SpawnPointList", [])
+        data = res.template(obj.get("TemplateResRef"), UTE, ".ute", ENCOUNTER_FIELDS) | obj
+        entries = []
+        for pawn in gff_rows(data, "CreatureList"):
+            ref = key_tag(pawn.get("ResRef"))
+            if ref:
+                entries.append(EncounterEntry(ref[:64], cr_text(pawn.get("CR")), bool(pawn.get("SingleSpawn")),
+                                              res.creature_card(ref)))
+        spawns = gff_rows(obj, "SpawnPointList")
+        card = EncounterCard(tuple(entries), res.table_name("encdifficulty", data.get("DifficultyIndex"), "StrRef"),
+                             stat_int(data.get("RecCreatures")), stat_int(data.get("MaxCreatures")),
+                             bool(data.get("Active")) if "Active" in data else None, len(spawns))
+        spawn = [cell_name(*locate(area, where)) for entry in spawns
                  if (where := area_position(area, entry)) is not None]
         lines = ["Střet NWN"]
-        if pool:
-            lines.append("Zásoba nestvůr · " + ", ".join(pool))
+        if entries:
+            lines.append("Zásoba nestvůr · " + ", ".join(f"{entry.resref} · CR {entry.cr}" for entry in entries))
         if spawn:
             lines.append("Místa výskytu · " + ", ".join(dict.fromkeys(spawn)))
-        add_mark(area, locate(area, pos), "monster", named_mark("monster", res.name(obj), note_for(obj, "\n".join(lines))))
+        add_mark(area, locate(area, pos), "monster", named_mark(
+            "monster", res.name(data) or "Střet NWN", note_for(obj, "\n".join(lines)), nwn_detail=card))
         report.encounters += 1
 
     scenery = []
@@ -858,7 +908,7 @@ def import_passages(areas, transitions, targets, resources, report):
 def import_module(path, game=None, profile=None, progress=None, *, tile_details=True):
     path = Path(path).expanduser().resolve()
     report = ImportReport()
-    archive = ErfReader(path, {ARE, SET, TGA, DDS, MDL, TWO_DA, IFO, GIT, UTC, NSS, NCS})
+    archive = ErfReader(path, {ARE, SET, TGA, DDS, MDL, TWO_DA, IFO, GIT, UTC, UTE, NSS, NCS})
     raw = archive.read("module", IFO)
     if not raw:
         raise AuroraError(f"{path.name} neobsahuje modul NWN s module.ifo.")
@@ -991,6 +1041,45 @@ def merge_nwn_treasures(project, imported):
                 key = marker_slot(occupied, cell, "treasure")
                 occupied.add(key)
                 patch.put(area.markers, key, mark)
+    return patch, matched
+
+
+def monster_identity(mark):
+    tag = mark.note.partition("\n")[0]
+    if tag.startswith(("Tag ", "Šablona ")):
+        return tag
+    return mark.name.casefold()
+
+
+def merge_nwn_monster_details(project, imported):
+    patch = Patch("Doplnění střetů a nestvůr z modulu NWN")
+    matched = 0
+    same_module = project.nwn_source is not None and project.nwn_source == imported.nwn_source
+    for area in project.areas.values():
+        source = imported.areas.get(area.source_ref)
+        if source is None or (turns := native_grid_rotation(area, source)) is None:
+            continue
+        matched += 1
+        details = defaultdict(dict)
+        for (x, y, slot), mark in source.markers.items():
+            if mark.nwn_detail is None or not (identity := monster_identity(mark)):
+                continue
+            px, py = rotated_xy(source.cols, source.rows, (x + .5, y + .5), turns)
+            details[math.floor(px), math.floor(py), identity][slot] = mark
+        for (x, y, slot), mark in area.markers.items():
+            if marker_group(slot) != "monster":
+                continue
+            candidates = details.get((x, y, monster_identity(mark)))
+            if not candidates:
+                continue
+            card = next(iter(candidates.values())).nwn_detail
+            if any(candidate.nwn_detail != card for candidate in candidates.values()):
+                original = candidates.get(slot)
+                # Ze stejného vydání lze ověřit i více shodně označených značek na jednom poli.
+                if not (same_module and original and original.note == mark.note and original.cr == mark.cr):
+                    continue
+                card = original.nwn_detail
+            patch.put(area.markers, (x, y, slot), replace(mark, nwn_detail=card))
     return patch, matched
 
 

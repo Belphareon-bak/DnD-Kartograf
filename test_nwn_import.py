@@ -13,11 +13,12 @@ from PyQt5.QtCore import QRectF
 from PyQt5.QtGui import QColor, QImage, QPainter
 
 from atlas_layout import area_routes, matching_edges, world_areas
-from aurora_reader import AuroraError
+from aurora_reader import AuroraError, ErfReader, read_gff
 from document import Area, Target, load_project, rotate_area, save_project
 from drawing import CELL, draw_map, draw_relief
 from example import mountain_project
-from nwn_import import ImportCancelled, import_module, merge_nwn_graphics, merge_nwn_treasures
+from nwn_bestiary import CreatureCard, EncounterCard
+from nwn_import import ImportCancelled, import_module, merge_nwn_graphics, merge_nwn_monster_details, merge_nwn_treasures
 from nwn_minimap import dds_image
 
 
@@ -211,7 +212,80 @@ def write_erf(path, resources, magic=b"MOD "):
     return path
 
 
+def bestiary_fixture(path):
+    base = module_fixture(path, hak="bestiary")
+    archive = ErfReader(base, {2012, 2013, 2014, 2023})
+    git = read_gff(archive.read("ridge", 2023))
+    git["Creature List"][0].update(TemplateResRef="cliff_creature", MaxHitPoints=37)
+    git["Encounter List"] = [dict(TemplateResRef="cliff_patrol", LocalizedName="Hlídka útesu",
+                                  Tag="patrol", XPosition=5.0, YPosition=15.0, RecCreatures=2)]
+    resources = [(name, kind, gff(b"GIT", git) if (name, kind) == ("ridge", 2023) else archive.read(name, kind))
+                 for name, kind in archive.entries]
+    write_erf(path, resources)
+    write_erf(path.with_name("bestiary.hak"), [
+        ("cliff_creature", 2027, gff(b"UTC", dict(FirstName="Útesový tvor", Description="Stráží horský brod.",
+                  ChallengeRating=3.0, CRAdjust=1, MaxHitPoints=32, HitPoints=25, NaturalAC=4,
+                  Str=17, Dex=12, Con=16, Int=8, Wis=11, Cha=7, Race=81, fortbonus=2,
+                  ClassList=[dict(Class=5, ClassLevel=3, KnownList1=[dict(Spell=7)])],
+                  FeatList=[dict(Feat=2)], SkillList=[dict(Rank=3)]))),
+        ("cliff_patrol", 2040, gff(b"UTE", dict(Active=1, MaxCreatures=4, DifficultyIndex=2, CreatureList=[
+            dict(ResRef="cliff_creature", CR=4.0, SingleSpawn=1),
+            dict(ResRef="missing_creature", CR=0.5, SingleSpawn=0),
+        ]))),
+        ("racialtypes", 2017, b'2DA V2.0\n\nLabel Name\n81 "Mountain folk" ****\n'),
+        ("classes", 2017, b'2DA V2.0\n\nLabel Name\n5 Guardian ****\n'),
+        ("spells", 2017, b'2DA V2.0\n\nLabel Name\n7 Mists ****\n'),
+        ("feat", 2017, b'2DA V2.0\n\nLabel Feat\n2 Bravery ****\n'),
+        ("skills", 2017, b'2DA V2.0\n\nLabel Name\n0 Perception ****\n'),
+        ("encdifficulty", 2017, b'2DA V2.0\n\nLabel StrRef\n2 Standard ****\n'),
+    ], b"HAK ")
+    return path
+
+
 class NwnImportTest(unittest.TestCase):
+    def test_bestiary_uses_gff_instance_and_template_data_and_refreshes_a_saved_map(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            source = bestiary_fixture(root / "patrol.mod")
+            imported, report = import_module(source, profile=root, tile_details=False)
+            self.assertEqual((report.creatures, report.encounters), (1, 1))
+            area = imported.areas["ridge"]
+            creature = next(mark.nwn_detail for mark in area.markers.values() if isinstance(mark.nwn_detail, CreatureCard))
+            encounter = next(mark.nwn_detail for mark in area.markers.values() if isinstance(mark.nwn_detail, EncounterCard))
+            self.assertEqual((creature.name, creature.source, creature.cr), ("Strážce", "GIT", "11"))
+            self.assertEqual(dict(creature.stats)["Maximální životy"], "37")
+            self.assertEqual((encounter.difficulty, encounter.recommended, encounter.maximum), ("Standard", 2, 4))
+            entry, missing = encounter.entries
+            self.assertEqual((entry.name, entry.cr, entry.single_spawn), ("Útesový tvor", "4", True))
+            self.assertEqual((entry.creature.source, entry.creature.cr), ("UTC", "3"))
+            self.assertEqual(entry.creature.abilities, (17, 12, 16, 8, 11, 7))
+            facts = dict(entry.creature.stats)
+            for label, value in (("Maximální životy", "32"), ("Přirozený bonus k OČ", "+4"),
+                                 ("Povolání a úrovně", "Guardian 3"), ("Známá kouzla", "Mists"),
+                                 ("Rasa", "Mountain folk"), ("Odbornosti", "Bravery"), ("Body dovedností", "Perception 3")):
+                self.assertEqual(facts[label], value)
+            self.assertEqual((missing.name, missing.cr, missing.creature), ("missing_creature", "0.5", None))
+
+            legacy = deepcopy(imported)
+            for key, mark in legacy.areas["ridge"].markers.items():
+                if mark.nwn_detail is not None:
+                    legacy.areas["ridge"].markers[key] = replace(mark, name="Pojmenováno v mapě", nwn_detail=None)
+            rotate_area(legacy, "ridge", 1).redo()
+            path = root / "legacy.kartograf"
+            save_project(legacy, path)
+            project = load_project(path)
+            update, matched = merge_nwn_monster_details(project, imported)
+            self.assertEqual((matched, len(update.edits)), (2, 2))
+            update.redo()
+            self.assertEqual(project.atlas, legacy.atlas)
+            for mark in project.areas["ridge"].markers.values():
+                if mark.nwn_detail:
+                    self.assertEqual(mark.name, "Pojmenováno v mapě")
+            save_project(project, path)
+            self.assertEqual(load_project(path), project)
+            update.undo()
+            self.assertEqual(project, legacy)
+
     def test_compiled_tile_uses_dds_and_can_refresh_a_rotated_existing_area(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

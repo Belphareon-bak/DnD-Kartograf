@@ -1,7 +1,7 @@
 """Datový model map, otočení, historie změn a projektový soubor Kartografu."""
 from contextlib import contextmanager
 from base64 import b64decode, b64encode
-from dataclasses import dataclass, field, replace
+from dataclasses import asdict, dataclass, field, replace
 from pathlib import Path
 import json
 import math
@@ -15,6 +15,7 @@ from PyQt5.QtGui import QImageReader
 from PyQt5.QtWidgets import QUndoCommand
 
 from catalog import ASSETS
+from nwn_bestiary import ABILITY_FIELDS, CreatureCard, EncounterCard, EncounterEntry
 
 MIN_SIZE, MAX_SIZE, MAX_AREAS = 1, 256, 512
 MAX_LEVEL = 9999
@@ -70,6 +71,7 @@ class Mark:
     target: Target | None = None
     origin_xy: tuple[float, float] | None = None
     arrival_xy: tuple[float, float] | None = None
+    nwn_detail: CreatureCard | EncounterCard | None = None
 
     @classmethod
     def from_asset(cls, key, turns=0):
@@ -423,6 +425,10 @@ def save_project(project, path):
                 record["kind"] = area.kind
             for layer in ("tiles", "edges", "markers"):
                 record[layer] = _encode_items(getattr(area, layer))
+            bestiary = [[*key, asdict(item.nwn_detail)] for key, item in sorted(area.markers.items())
+                        if item.nwn_detail is not None]
+            if bestiary:
+                record["nwn_bestiary"] = bestiary
             if area.heights:
                 record["heights"] = [[x, y, level] for (x, y), level in sorted(area.heights.items())]
             if area.source_ref or area.tileset:
@@ -511,6 +517,40 @@ def _read_items(area, layer, entries, minimaps, details):
             _require(not origin or origin[0] <= area.cols and origin[1] <= area.rows)
             _require(not arrival or target is not None)
         mapping[location] = Mark(style, turns, name, note, cr, dc, hidden, target, origin, arrival)
+
+
+def _read_creature_card(data):
+    card = CreatureCard(**data)
+    _require(_string(card.name, 100) and _string(card.resref, 64) and _string(card.cr, 16)
+             and card.source in {"GIT", "UTC"} and _string(card.description, 8000))
+    _require(len(card.abilities) == len(ABILITY_FIELDS)
+             and all(score is None or _integer(score, 0, 255) for score in card.abilities))
+    _require(len(card.stats) <= 24 and all(_string(label, 100) and _string(value, 4000)
+                                           for label, value in card.stats))
+    return replace(card, abilities=tuple(card.abilities), stats=tuple(tuple(row) for row in card.stats))
+
+
+def _read_encounter_card(data):
+    card = EncounterCard(**data)
+    _require(_string(card.difficulty, 160) and (card.active is None or type(card.active) is bool)
+             and _integer(card.spawn_points, 0, 2 ** 31 - 1)
+             and all(value is None or _integer(value, 0, 65535) for value in (card.recommended, card.maximum)))
+    entries = []
+    for raw in card.entries:
+        entry = EncounterEntry(**raw)
+        _require(_string(entry.resref, 64) and _string(entry.cr, 16) and type(entry.single_spawn) is bool)
+        entries.append(replace(entry, creature=_read_creature_card(entry.creature) if entry.creature is not None else None))
+    return replace(card, entries=tuple(entries))
+
+
+def _read_bestiary(area, records):
+    for x, y, flag, raw in records:
+        _require(_integer(x, 0, MAX_SIZE) and _integer(y, 0, MAX_SIZE) and isinstance(flag, str))
+        key = x, y, flag
+        item = area.markers.get(key)
+        _require(item is not None and item.nwn_detail is None and marker_group(flag) == "monster")
+        card = _read_encounter_card(raw) if "entries" in raw else _read_creature_card(raw)
+        area.markers[key] = replace(item, nwn_detail=card)
 
 
 def _read_layout(values, tileset, minimaps, details):
@@ -613,6 +653,7 @@ def load_project(path):
                     area.heights[x, y] = level
                 for layer in ("tiles", "edges", "markers"):
                     _read_items(area, layer, record[layer], minimaps, details)
+                _read_bestiary(area, record.get("nwn_bestiary", []))
                 area.scenery = _read_scenery(area, record.get("scenery", []), models)
                 if "reference" in record:
                     area.reference = _read_reference(archive, record["reference"], index)

@@ -2,10 +2,12 @@
 
 from dataclasses import dataclass
 from pathlib import Path
+import re
 import struct
 
 
 TGA, NSS, NCS, ARE, SET, IFO, GIT = 3, 2009, 2010, 2012, 2013, 2014, 2023
+UTC, UTE = 2027, 2040
 MDL, TWO_DA, DDS = 2002, 2017, 2033
 MAX_RESOURCE_BYTES = 64 * 1024 * 1024
 MAX_DIRECTORY_ENTRIES = 1_000_000
@@ -13,6 +15,7 @@ ERF_HEADER = struct.Struct("<4s4s9I")
 ERF_KEY = struct.Struct("<16sIHH")
 GFF_TRIPLE = struct.Struct("<III")
 U32 = struct.Struct("<I")
+TABLE_TOKEN = re.compile(r'"([^"]*)"|(\S+)')
 
 
 class AuroraError(ValueError):
@@ -180,6 +183,23 @@ class GffReader:
 
 def read_gff(raw, fields=None):
     return GffReader(raw, fields).decode()
+
+
+def table_columns(raw, *columns):
+    if not raw or not raw.startswith(b"2DA "):
+        return {}
+    result = {}
+    positions = None
+    for line in text_bytes(raw).splitlines()[1:]:
+        if not line.strip() or line.lstrip().casefold().startswith("default:"):
+            continue
+        fields = [b or a for a, b in TABLE_TOKEN.findall(line)]
+        if positions is None:
+            names = {field.casefold(): index for index, field in enumerate(fields, 1)}
+            positions = tuple(names.get(label.casefold(), -1) for label in columns)
+        elif fields and fields[0].isascii() and fields[0].isdecimal() and len(fields[0]) <= 9:
+            result[int(fields[0])] = tuple(fields[index] if 0 <= index < len(fields) else "" for index in positions)
+    return result
 
 
 class TalkTable:

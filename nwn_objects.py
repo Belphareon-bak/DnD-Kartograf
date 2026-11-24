@@ -8,13 +8,12 @@ from sys import byteorder
 from PyQt5.QtCore import QPointF, Qt
 from PyQt5.QtGui import QBrush, QColor, QImage, QMatrix4x4, QPainter, QPolygonF, QQuaternion, QTransform, QVector3D
 
-from aurora_reader import text_bytes
+from aurora_reader import table_columns
 from document import MAX_MINIMAP_SIDE, MAX_SIZE, ObjectPreview
 from nwn_mdl import binary_nodes
 from nwn_minimap import image_png
 
 NAME = re.compile(r"[a-z0-9_-]{1,16}")
-TABLE_TOKEN = re.compile(r'"([^"]*)"|(\S+)')
 MAX_MODEL_BYTES = 4 * 1024 * 1024
 MAX_VERTICES = 48_000
 
@@ -30,20 +29,8 @@ class ProjectedFace:
 
 
 def appearance_models(raw):
-    if not raw or not raw.startswith(b"2DA "):
-        return {}
-    column = None
-    result = {}
-    for line in text_bytes(raw).splitlines()[1:]:
-        fields = [(a or b).lower() for a, b in TABLE_TOKEN.findall(line)]
-        if not fields:
-            continue
-        if column is None:
-            if "modelname" in fields:
-                column = fields.index("modelname") + 1
-        elif len(fields) > column and fields[0].isdigit() and NAME.fullmatch(fields[column]):
-            result[int(fields[0])] = fields[column]
-    return result
+    return {index: field.lower() for index, (field,) in table_columns(raw, "ModelName").items()
+            if NAME.fullmatch(field.lower())}
 
 
 def components(words, length):

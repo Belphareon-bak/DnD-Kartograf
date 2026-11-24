@@ -38,6 +38,8 @@ Dvojklik na oblast otevře její detail. Mřížku lze zapnout vedle přiblíže
 
 V detailu oblasti klikni nástrojem **Ruka** na značku. Vpravo uvidíš název a typ prvku. U přechodu je vidět cílová oblast a pole, tlačítko **Přejít na cíl** otevře místo příchodu. Tahem s nástrojem Ruka posuneš plátno. **Výběr** otevře také formulář pro úpravu značky.
 
+Kliknutím na střet zobrazíš možné nestvůry, jejich CR a nastavení počtu. Kliknutím na název nestvůry otevřeš její kartu se statistikami z NWN. U postavy přímo umístěné v oblasti je v panelu tlačítko **Karta nestvůry**.
+
 ## Hory, svahy a propasti
 
 V **Exteriéry → Hory a skály** najdeš horský masiv, suť, zasněžený hřeben a skálu. Podklad můžeš vybarvit samostatně a potom v kategorii **Reliéf** přidat kladné nebo záporné výškové stupně. Štětec mění každé pole jednou za tah. Pro celé plošiny lze použít **Obdélník**.
@@ -63,6 +65,10 @@ Z uložených objektů se přenesou nativní průchody, dveře, poznámky mapy, 
 U doložených obousměrných prahů se půdorysy přiloží ve stejné síti podle polohy spouští a směru příchodu. Mřížka ukazuje desetimetrové dlaždice Toolsetu a průběh stěn a chodeb určuje herní geometrie. U menších modulů se samostatný půdorys může zobrazit v mezeře poblíž svého přechodu, pokud se tam vejde.
 
 Ve starším projektu použij **Soubor → Doplnit poklady z modulu NWN…** a vyber zdrojový modul. Kartograf doplní chybějící značky do odpovídajících půdorysů a zachová rozložení mapy.
+
+Při importu se ukládají i karty nestvůr. Čtou údaje ze šablon UTC a přímo umístěných instancí GIT včetně životů, vlastností, povolání, bonusů, kouzel a herního popisu, pokud jsou dostupné. CR uvedené u střetu pochází z jeho seznamu možných nestvůr. Přirozený bonus k OČ a bonusy k záchranám se zobrazují podle uložených hodnot. [Formát nestvůr BioWare](https://github.com/xoreos/xoreos-docs/blob/master/specs/bioware/Creature_Format.pdf) · [Formát střetů BioWare](https://github.com/xoreos/xoreos-docs/blob/master/specs/bioware/Encounter_Format.pdf)
+
+V již uložené mapě použij **Soubor → Doplnit střety a nestvůry z modulu NWN…**. Kartograf přiřadí karty k existujícím značkám v odpovídajících půdorysech. Doplnění lze vrátit zpět.
 
 ### Místní pravidla pro vlastní modul
 
