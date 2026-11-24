@@ -609,6 +609,34 @@ class GuiTest(unittest.TestCase):
         self.assertFalse(self.window.area_list.item(0).isHidden())
         self.assertTrue(self.window.area_list.item(1).isHidden())
 
+    def test_hand_click_inspects_each_marker_and_drag_pans(self):
+        landing = Target(self.b.uid, 1, 3)
+        self.b.name = "Dlouhý název cílové oblasti za podzemním jezerem"
+        self.a.markers[2, 2, "link"] = replace(Mark.from_asset("exit"), target=landing)
+        self.a.markers[2, 2, "monster"] = replace(Mark.from_asset("monster"), name="Hlídka",
+                                                   note="Střet NWN\nZásoba nestvůr · crawler · CR 3")
+        self.window.select_tool("hand")
+        before = self.canvas.origin
+        self.click(2.75, 2.25)
+        self.assertEqual(self.canvas.selection, ("markers", (2, 2, "monster")))
+        self.assertIsNone(self.window.mark_form)
+        self.assertEqual(self.window.inspector.findChild(QLabel, "legacyEncounterPool").text(), "crawler · CR 3")
+        self.assertEqual(self.canvas.origin, before)
+        QTest.keyClick(self.canvas, Qt.Key_Delete)
+        self.assertIn((2, 2, "monster"), self.a.markers)
+        start = self.at(2.25, 2.25)
+        QTest.mousePress(self.canvas, Qt.LeftButton, pos=start)
+        QTest.mouseRelease(self.canvas, Qt.LeftButton, pos=start + QPoint(45, 20))
+        self.assertEqual(self.canvas.selection, ("markers", (2, 2, "monster")))
+        self.assertEqual(self.canvas.origin, before + QPointF(45, 20))
+        self.click(2.25, 2.25)
+        summary = self.window.inspector_body.itemAt(0).widget()
+        self.assertEqual(summary.findChild(QLabel, "transitionDestination").text(), self.b.name)
+        self.assertLessEqual(summary.width(), self.window.inspector_scroll.viewport().width())
+        QTest.mouseClick(summary.findChild(QPushButton, "jumpSummary"), Qt.LeftButton)
+        self.assertEqual(self.window.project.active, self.b.uid)
+        self.assertTrue(self.window.history.isClean())
+
     def test_two_way_link_jump_rotate_and_erase(self):
         self.window.select_asset("exit")
         self.window.rotate_brush()

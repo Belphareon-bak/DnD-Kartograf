@@ -5,7 +5,7 @@ from math import ceil, floor, hypot
 
 from PyQt5.QtCore import QPointF, QRectF, QSize, Qt, pyqtSignal
 from PyQt5.QtGui import QColor, QKeySequence, QLinearGradient, QPainter
-from PyQt5.QtWidgets import QShortcut, QWidget
+from PyQt5.QtWidgets import QApplication, QShortcut, QWidget
 
 from catalog import ASSETS, RELIEF
 from document import MAX_LEVEL, Mark, Patch, Tile, TileLayout, cell_name, set_marker
@@ -17,7 +17,7 @@ TOOLS = {
     "fill": ("Výplň", "G", "Vyplní souvislou plochu podkladu. Zdi a dveře výplň zastaví."),
     "erase": ("Guma", "E", "Maže prvek pod kurzorem. Shift maže jen podklad."),
     "select": ("Výběr", "V", "Kliknutím vyber prvek a uprav jeho vlastnosti."),
-    "hand": ("Ruka", "H", "Posouvej plátno tahem. Kolečkem měníš přiblížení."),
+    "hand": ("Ruka", "H", "Kliknutí ukáže vlastnosti značky. Tahem posuneš mapu, kolečkem ji přiblížíš."),
 }
 
 
@@ -38,6 +38,7 @@ class Canvas(QWidget):
         self.origin = QPointF()
         self._fit = True
         self._pan = self._mouse_start = self._last_draw = self._rect_start = None
+        self._hand_press = None
         self._stroke = None
         self._button = Qt.NoButton
         self._right = self._space = False
@@ -125,7 +126,29 @@ class Canvas(QWidget):
     def items_in(self, cell):
         return sorted(self.area.markers_in(*cell))
 
-    def picked(self, point, floor_fallback=True):
+    def nearest_marker(self, point):
+        cell = self.cell_at(point)
+        items = self.items_in(cell)
+        if not items:
+            return None
+        local = point * CELL
+        def distance(row):
+            offset = local - row[2]
+            return offset.x() ** 2 + offset.y() ** 2
+        row = min(positions(cell, items), key=distance)
+        return row, distance(row)
+
+    def marker_hit(self, point):
+        nearest = self.nearest_marker(point)
+        if nearest:
+            (key, _, _, radius), distance = nearest
+            if distance <= (radius + min(3, 2 * CELL / self.step)) ** 2:
+                return "markers", key
+        return None
+
+    def picked(self, point, floor_fallback=True, *, precise=False):
+        if precise and (mark := self.marker_hit(point)):
+            return mark
         x, y = self.cell_at(point)
         edge = self.edge_at(point)
         ex, ey, axis = edge
@@ -134,11 +157,8 @@ class Canvas(QWidget):
             return "edges", edge
         if not self.area.contains(x, y):
             return None
-        items = self.items_in((x, y))
-        if items:
-            wanted = min(positions((x, y), items),
-                         key=lambda row: (point.x() * CELL - row[2].x()) ** 2 + (point.y() * CELL - row[2].y()) ** 2)
-            return "markers", wanted[0]
+        if not precise and (nearest := self.nearest_marker(point)):
+            return "markers", nearest[0][0]
         if floor_fallback and (x, y) in self.area.tiles:
             return "tiles", (x, y)
         if floor_fallback and (x, y) in self.area.heights:
@@ -152,7 +172,7 @@ class Canvas(QWidget):
         self.update()
 
     def erase_selection(self):
-        if not self.selection:
+        if not self.selection or self.tool == "hand":
             return
         layer, key = self.selection
         patch = Patch("Odebrání prvku")
@@ -339,6 +359,7 @@ class Canvas(QWidget):
             self._stroke.undo()
         self._button = Qt.NoButton
         self._stroke = self._pan = self._last_draw = self._rect_start = self._pending_selection = None
+        self._hand_press = None
         self._height_touched.clear()
         self.set_tool(self.tool)
 
@@ -357,10 +378,13 @@ class Canvas(QWidget):
         self._right = event.button() == Qt.RightButton
         if event.button() == Qt.MiddleButton or self._space or self.tool == "hand":
             self._pan = self.origin - event.localPos()
-            self.setCursor(Qt.ClosedHandCursor)
+            if self.tool == "hand" and event.button() == Qt.LeftButton and not self._space:
+                self._hand_press = event.localPos()
+            else:
+                self.setCursor(Qt.ClosedHandCursor)
             return
         if self.tool == "select" and not self._right:
-            self.select(self.picked(point))
+            self.select(self.marker_hit(point) or self.picked(point))
             return
         layer = ASSETS[self.asset].layer
         if self.tool == "rect" and not self._right:
@@ -377,7 +401,7 @@ class Canvas(QWidget):
         self.update()
 
     def open_transition(self, point):
-        picked = self.picked(point, floor_fallback=False)
+        picked = self.marker_hit(point)
         if picked and picked[0] == "markers":
             item = self.area.markers.get(picked[1])
             if item and item.target:
@@ -386,7 +410,7 @@ class Canvas(QWidget):
         return False
 
     def mouseDoubleClickEvent(self, event):
-        if self.area and event.button() == Qt.LeftButton and self.tool == "select":
+        if self.area and event.button() == Qt.LeftButton and self.tool in {"select", "hand"}:
             if self.open_transition(self.grid_pos(event.localPos())):
                 self.cancel_gesture()
                 return
@@ -396,8 +420,7 @@ class Canvas(QWidget):
         if not self.area:
             return
         if self._pan is not None:
-            self.origin = event.localPos() + self._pan
-            self._fit = False
+            self.update_pan(event.localPos())
         self._hover = self.grid_pos(event.localPos())
         x, y = self.cell_at(self._hover)
         if self._stroke is not None and self._last_draw is not None:
@@ -409,6 +432,17 @@ class Canvas(QWidget):
         else:
             self.hover_changed.emit("")
         self.update()
+
+    def update_pan(self, position):
+        if self._hand_press is not None:
+            if (position - self._hand_press).manhattanLength() < QApplication.startDragDistance():
+                return
+            self._hand_press = None
+            self.setCursor(Qt.ClosedHandCursor)
+        origin = position + self._pan
+        if self.origin != origin:
+            self.origin = origin
+            self._fit = False
 
     def extend_stroke(self, point, modifiers):
         if ASSETS[self.asset].layer == "markers" and self.tool != "erase":
@@ -430,10 +464,10 @@ class Canvas(QWidget):
         self._button = Qt.NoButton
         point = self.grid_pos(event.localPos())
         if self._pan is not None:
-            position = event.localPos() + self._pan
-            if position != self.origin:
-                self.origin = position
-                self._fit = False
+            self.update_pan(event.localPos())
+            if self._hand_press is not None:
+                self.select(self.picked(point, floor_fallback=False, precise=True))
+            self._hand_press = None
             self._pan = None
             self.set_tool(self.tool)
         elif self._rect_start is not None:

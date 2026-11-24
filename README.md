@@ -36,6 +36,8 @@ Mapa světa zahrnuje exteriéry a půdorysy napojené veřejným průchodem na s
 
 Dvojklik na oblast otevře její detail. Mřížku lze zapnout vedle přiblížení a stejnou volbu má export.
 
+V detailu oblasti klikni nástrojem **Ruka** na značku. Vpravo uvidíš název a typ prvku. U přechodu je vidět cílová oblast a pole, tlačítko **Přejít na cíl** otevře místo příchodu. Tahem s nástrojem Ruka posuneš plátno. **Výběr** otevře také formulář pro úpravu značky.
+
 ## Hory, svahy a propasti
 
 V **Exteriéry → Hory a skály** najdeš horský masiv, suť, zasněžený hřeben a skálu. Podklad můžeš vybarvit samostatně a potom v kategorii **Reliéf** přidat kladné nebo záporné výškové stupně. Štětec mění každé pole jednou za tah. Pro celé plošiny lze použít **Obdélník**.

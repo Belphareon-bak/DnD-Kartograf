@@ -395,6 +395,66 @@ class ExportDialog(QDialog):
                     reference=self.reference.isChecked(), player=self.audience.currentData())
 
 
+def detail_label(text, name=""):
+    label = QLabel()
+    label.setObjectName(name)
+    label.setTextFormat(Qt.PlainText)
+    label.setTextInteractionFlags(Qt.TextSelectableByMouse)
+    label.setWordWrap(True)
+    label.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Preferred)
+    label.setText(text)
+    return label
+
+
+class MarkSummary(QFrame):
+    go_to = pyqtSignal(object)
+
+    def __init__(self, project, area, key, item, *, browsing):
+        super().__init__()
+        self.setObjectName("markSummary")
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(10, 9, 10, 10)
+        layout.setSpacing(6)
+        asset = ASSETS[item.style]
+        notes = item.note.splitlines()
+        kind = {"link": "Přechod", "monster": "Střet NWN" if "Střet NWN" in notes else "Nestvůra"}.get(
+            asset.group, GROUPS[asset.group])
+        coordinate = cell_name(min(key[0], area.cols - 1), min(key[1], area.rows - 1))
+        layout.addWidget(subtle(f"{kind} · {coordinate}"))
+        layout.addWidget(detail_label(item.name or (kind if asset.group == "monster" else asset.name), "objectTitle"))
+        if asset.group == "link":
+            self.add_destination(layout, project, item, notes, browsing)
+        if asset.group == "monster" and item.cr:
+            layout.addWidget(detail_label(f"CR {item.cr}", "markChallenge"))
+        for line in notes:
+            title, _, value = line.partition(" · ")
+            if title == "Zásoba nestvůr" and value:
+                layout.addWidget(heading("MOŽNÉ NESTVŮRY"))
+                layout.addWidget(detail_label(value.replace(", ", "\n"), "legacyEncounterPool"))
+        if browsing and kind not in {"Přechod", "Střet NWN"}:
+            if item.dc is not None:
+                layout.addWidget(detail_label(f"TO / DC {item.dc}"))
+            if item.note:
+                layout.addWidget(detail_label(item.note))
+
+    def add_destination(self, layout, project, item, notes, browsing):
+        target = item.target
+        area = project.areas.get(target.area) if target else None
+        if area:
+            layout.addWidget(heading("CÍLOVÁ OBLAST"))
+            layout.addWidget(detail_label(area.name, "transitionDestination"))
+            layout.addWidget(subtle(f"Cílové pole {cell_name(target.x, target.y)}"))
+            if browsing:
+                jump = labeled_button("Přejít na cíl", "jumpSummary", "exit")
+                jump.clicked.connect(lambda: self.go_to.emit(target))
+                layout.addWidget(jump)
+        else:
+            tag = next((line for line in notes if line.startswith("Cílový tag ")), "")
+            layout.addWidget(detail_label("Cíl se nepodařilo dohledat" if tag else "Cíl není nastavený", "transitionDestination"))
+            if tag:
+                layout.addWidget(detail_label(tag))
+
+
 class MarkForm(QWidget):
     applied = pyqtSignal(object, bool)
     go_to = pyqtSignal(object)
@@ -452,6 +512,8 @@ class MarkForm(QWidget):
     def _link_fields(self, layout):
         self.destination = QComboBox()
         self.destination.setObjectName("linkArea")
+        self.destination.setSizeAdjustPolicy(QComboBox.AdjustToMinimumContentsLengthWithIcon)
+        self.destination.setMinimumContentsLength(9)
         self.destination.addItem("Bez cíle", None)
         for uid, area in self.project.areas.items():
             self.destination.addItem(area.name, uid)

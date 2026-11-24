@@ -20,6 +20,8 @@ QLabel#coordinates, QLabel#zoomLabel { color: #d5dbc9; font-family: "IBM Plex Mo
 QLabel#statusHelp { color: #abb7aa; font-size: 12px; }
 QFrame#palette, QFrame#areaPanel { background-color: #202622; }
 QFrame#activeAsset { background-color: #2b342b; border: 1px solid #435041; border-radius: 8px; }
+QFrame#markSummary { background-color: #293329; border: 1px solid #465344; border-radius: 7px; }
+QLabel#transitionDestination, QLabel#markChallenge { color: #f3d5a0; font-weight: 700; }
 QFrame#toolStrip, QFrame#mapTitleBar { background: #252d26; border-bottom: 1px solid #3b483d; }
 QFrame#status { background: #191f1b; border-top: 1px solid #394239; }
 QFrame[role="separator"] { border: none; background: #39463b; }

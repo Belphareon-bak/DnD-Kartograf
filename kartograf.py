@@ -16,7 +16,7 @@ from PyQt5.QtWidgets import (QAction, QApplication, QButtonGroup, QDialog, QFile
 from atlas_layout import add_interior_layers
 from atlas_view import AtlasView
 from canvas import Canvas, TOOLS
-from catalog import ASSETS, GROUPS
+from catalog import ASSETS
 from document import (AREA_KINDS, Area, MAX_AREAS, MAX_LEVEL, Mark, Patch, Project, ProjectEdit, Target,
                       UNITS, cell_name, delete_area, import_reference, load_project,
                       resize_allowed, rotate_area, save_project, set_marker)
@@ -24,7 +24,7 @@ from drawing import (CELL, SANS, compass, export_area_pdf, export_atlas_pdf, exp
                      export_png, export_size, font, icon)
 from example import mountain_project
 from nwn_import import ImportCancelled, game_folder, import_module, merge_nwn_graphics, merge_nwn_treasures, profile_dir
-from panels import (AreaDialog, DIRECTIONS, ExportDialog, MarkForm, Palette, ReferenceDialog,
+from panels import (AreaDialog, DIRECTIONS, ExportDialog, MarkForm, MarkSummary, Palette, ReferenceDialog,
                     StartupDialog, heading, labeled_button, normalized, space_spin, subtle)
 
 BASEDIR = Path(__file__).resolve().parent
@@ -603,6 +603,7 @@ class Editor(QMainWindow):
         scroll.setWidgetResizable(True)
         scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         scroll.setAccessibleName("Vlastnosti prvku nebo oblasti")
+        self.inspector_scroll = scroll
         self.inspector = QWidget()
         self.inspector_body = QVBoxLayout(self.inspector)
         self.inspector_body.setContentsMargins(0, 1, 3, 1)
@@ -897,6 +898,7 @@ class Editor(QMainWindow):
             if child:
                 child.hide()
                 child.deleteLater()
+        self.inspector_scroll.verticalScrollBar().setValue(0)
         if self.project is None:
             return
         if self.atlas_mode:
@@ -910,18 +912,16 @@ class Editor(QMainWindow):
                 if layer in {"tiles", "heights"}:
                     self.tile_inspector(key)
                     return
-                asset = ASSETS[item.style]
-                where = cell_name(min(key[0], self.area.cols - 1), min(key[1], self.area.rows - 1))
-                title = QLabel(item.name or asset.name)
-                title.setObjectName("objectTitle")
-                title.setWordWrap(True)
-                self.inspector_body.addWidget(title)
-                self.inspector_body.addWidget(subtle(f"{GROUPS[asset.group]} · {where}"))
-                form = MarkForm(self.project, self.area, key, item)
-                form.applied.connect(lambda value, pair: self.apply_mark(layer, key, value, pair))
-                form.go_to.connect(self.jump)
-                self.inspector_body.addWidget(form)
-                self.mark_form = form
+                browsing = self.canvas.tool == "hand"
+                summary = MarkSummary(self.project, self.area, key, item, browsing=browsing)
+                summary.go_to.connect(self.jump)
+                self.inspector_body.addWidget(summary)
+                if not browsing:
+                    form = MarkForm(self.project, self.area, key, item)
+                    form.applied.connect(lambda value, pair: self.apply_mark(layer, key, value, pair))
+                    form.go_to.connect(self.jump)
+                    self.inspector_body.addWidget(form)
+                    self.mark_form = form
                 self.inspector_body.addStretch(1)
                 return
 
@@ -946,7 +946,7 @@ class Editor(QMainWindow):
                 button.clicked.connect(lambda checked, to=item.target: self.jump(to))
                 self.inspector_body.addWidget(button)
         else:
-            self.inspector_body.addWidget(subtle("Vlastnosti značky, dveří nebo průchodu otevřeš nástrojem Výběr."))
+            self.inspector_body.addWidget(subtle("Klikni na značku v mapě. Výběr umožní její úpravu."))
         if self.area.reference:
             button = labeled_button("Nastavit předlohu…", "referenceSettings", "image")
             button.clicked.connect(self.adjust_reference)
@@ -1033,6 +1033,8 @@ class Editor(QMainWindow):
         self.tool_buttons[tool].setChecked(True)
         self.canvas.set_tool(tool)
         self.canvas.setFocus()
+        if self.canvas.selection and not self.atlas_mode:
+            self.refresh_inspector()
         self.default_hint()
 
     def select_asset(self, key):
